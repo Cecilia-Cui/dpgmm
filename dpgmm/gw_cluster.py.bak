@@ -1,0 +1,59 @@
+#! /usr/bin/env python
+# -*- coding: utf-8 -*-
+
+import h5py
+import numpy as np
+import glob
+import random
+from utils.prog_bar import ProgBar
+from dpgmm import DPGMM
+
+# 读取引力波数据
+def load_strain_data(file_path):
+    with h5py.File(file_path, 'r') as f:
+        strain_data = f['strain']['Strain'][()]
+    return strain_data
+
+# 自动加载当前目录下的所有 HDF5 文件
+file_paths = glob.glob('*.hdf5')
+
+strain_data_list = []
+for file_path in file_paths:
+    strain_data = load_strain_data(file_path)
+    strain_data_list.append(strain_data)
+
+# 将数据合并为一个特征矩阵
+data = np.vstack(strain_data_list).T
+
+# Parameters...
+trainCount = len(data)  # 训练样本数量
+
+# 训练 DPGMM 模型
+print('Training model...')
+model = DPGMM(4)  # 根据需要设置组件数量
+for feat in data:
+    model.add(feat)
+
+model.setPrior()
+model.setConcGamma(1.0, 0.25)  # 设置优先级
+
+# 解决模型
+p = ProgBar()
+iters = model.solveGrow()
+del p
+print('Solved model with %i iterations' % iters)
+
+# 分类和混淆矩阵
+probs = model.stickProb(data)
+catGuess = probs.argmax(axis=1)
+
+# 生成假设真实标签
+catTruth = np.array([0] * len(strain_data_list[0]))  # 假设真实标签已知
+
+# 计算混淆矩阵
+confusion_matrix = np.zeros((4, model.getStickCap() + 1), dtype=np.int32)  # 根据组件数量调整
+for i in range(len(catGuess)):
+    confusion_matrix[catTruth[i], catGuess[i]] += 1
+
+print('Confusion matrix [truth, guess]:')
+print(confusion_matrix)
